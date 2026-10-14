@@ -9,6 +9,9 @@
 #include "Common.h"
 #import <sys/stat.h>
 #include <errno.h>
+#include <unistd.h>
+#include <string.h>
+#include <limits.h>
 
 static BOOL isPlaying = false;
 
@@ -29,14 +32,14 @@ static NSString *ZXFirstExecutablePath(NSArray<NSString *> *candidates)
     return nil;
 }
 
-static NSString *ZXPythonPath(void)
+static NSArray<NSString *> *ZXPythonCandidates(void)
 {
     // Prefer specific versions before the generic `python3` symlink. If a
     // previous install of ZXTouch (or another package) pointed `python3` at a
     // broken interpreter (e.g. Procursus 3.7 whose libpython lives at a path
     // dyld can't resolve on rootless), a versioned binary is more likely to
     // actually load. 3.7 is dropped entirely — it aborts at dyld on 15+.
-    return ZXFirstExecutablePath(@[
+    return @[
         jbroot(@"/usr/bin/python3.12"),
         jbroot(@"/usr/bin/python3.11"),
         jbroot(@"/usr/bin/python3.10"),
@@ -55,7 +58,112 @@ static NSString *ZXPythonPath(void)
         @"/usr/bin/python3.9",
         @"/usr/bin/python3.8",
         @"/usr/bin/python3"
-    ]);
+    ];
+}
+
+static NSString *ZXPythonPath(void)
+{
+    return ZXFirstExecutablePath(ZXPythonCandidates());
+}
+
+// Describe one candidate precisely enough to tell "the file is not there" apart
+// from "the file is there and this process is not allowed to see it". Those look
+// identical through isExecutableFileAtPath:, which is why a device with python3
+// plainly installed could still report it missing with nothing to go on.
+static NSString *ZXDescribePath(NSString *path)
+{
+    if (path.length == 0) return @"(empty path)";
+
+    const char *cpath = [path fileSystemRepresentation];
+    struct stat st;
+    if (lstat(cpath, &st) != 0) {
+        return [NSString stringWithFormat:@"%@ -> MISSING (%s)", path, strerror(errno)];
+    }
+
+    NSMutableString *line = [NSMutableString stringWithFormat:@"%@ -> mode=%04o", path, st.st_mode & 07777];
+
+    if ((st.st_mode & S_IFMT) == S_IFLNK) {
+        char target[PATH_MAX];
+        ssize_t n = readlink(cpath, target, sizeof(target) - 1);
+        if (n > 0) {
+            target[n] = '\0';
+            [line appendFormat:@" symlink->%s", target];
+            struct stat tst;
+            [line appendString:(stat(cpath, &tst) == 0) ? @" (target ok)" : @" (TARGET BROKEN)"];
+        }
+    }
+
+    [line appendFormat:@" exec=%@", access(cpath, X_OK) == 0 ? @"yes" : [NSString stringWithFormat:@"no(%s)", strerror(errno)]];
+    [line appendFormat:@" read=%@", access(cpath, R_OK) == 0 ? @"yes" : [NSString stringWithFormat:@"no(%s)", strerror(errno)]];
+    [line appendFormat:@" nsexec=%@", [[NSFileManager defaultManager] isExecutableFileAtPath:path] ? @"yes" : @"no"];
+    return line;
+}
+
+// Built only when the lookup has already failed, so it costs nothing normally.
+static NSString *ZXPythonDiagnostics(void)
+{
+    NSMutableArray<NSString *> *lines = [NSMutableArray array];
+    [lines addObject:@"ZXTouch: no usable python3 found. Interpreter search:"];
+    [lines addObject:[NSString stringWithFormat:@"  jbroot(\"/usr/bin\") = %@", jbroot(@"/usr/bin")]];
+
+    for (NSString *candidate in ZXPythonCandidates()) {
+        [lines addObject:[@"  " stringByAppendingString:ZXDescribePath(candidate)]];
+    }
+
+    // Listing the directory separately matters: if the candidates all report
+    // MISSING but the directory itself cannot be read, the binaries are there
+    // and this process is being denied, which is a different fix entirely.
+    for (NSString *binDir in @[jbroot(@"/usr/bin"), @"/var/jb/usr/bin", @"/usr/bin"]) {
+        NSError *dirError = nil;
+        NSArray<NSString *> *entries = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:binDir error:&dirError];
+        if (entries) {
+            NSMutableArray<NSString *> *pythons = [NSMutableArray array];
+            for (NSString *entry in entries) {
+                if ([entry hasPrefix:@"python"]) [pythons addObject:entry];
+            }
+            [lines addObject:[NSString stringWithFormat:@"  listing %@: %lu entries, python*: %@",
+                              binDir, (unsigned long)entries.count,
+                              pythons.count ? [pythons componentsJoinedByString:@", "] : @"none"]];
+        } else {
+            [lines addObject:[NSString stringWithFormat:@"  listing %@: FAILED (%@)",
+                              binDir, dirError.localizedDescription ?: @"unknown error"]];
+        }
+    }
+
+    return [lines componentsJoinedByString:@"\n"];
+}
+
+// Write to the same log the app's Logs tab reads. A failure here happens before
+// any script launches, so the shell wrapper that normally writes this file never
+// runs, and the user is left with an empty log and nothing to report.
+static void ZXAppendToRuntimeLog(NSString *text)
+{
+    NSString *logPath = @"/var/mobile/Library/ZXTouch/coreutils/ScriptRuntime/output";
+    NSFileManager *fm = [NSFileManager defaultManager];
+
+    NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
+    formatter.dateFormat = @"MM-dd-yyyy HH:mm:ss";
+    NSString *stamped = [NSString stringWithFormat:@"%@: %@\n", [formatter stringFromDate:[NSDate date]], text];
+
+    if (![fm fileExistsAtPath:logPath]) {
+        [fm createDirectoryAtPath:[logPath stringByDeletingLastPathComponent]
+      withIntermediateDirectories:YES attributes:nil error:nil];
+        [stamped writeToFile:logPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
+        return;
+    }
+
+    NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:logPath];
+    if (!handle) return;
+    @try {
+        [handle seekToEndOfFile];
+        [handle writeData:[stamped dataUsingEncoding:NSUTF8StringEncoding]];
+    }
+    @catch (NSException *exception) {
+        NSLog(@"com.zjx.springboard: could not append to runtime log: %@", exception.reason);
+    }
+    @finally {
+        [handle closeFile];
+    }
 }
 
 static NSString *ZXShellPath(void)
@@ -366,8 +474,12 @@ static NSString *ZXPythonModulePath(void)
     NSString *pythonPath = ZXPythonPath();
     if (!pythonPath)
     {
+        NSString *diagnostics = ZXPythonDiagnostics();
+        NSLog(@"com.zjx.springboard: %@", diagnostics);
+        ZXAppendToRuntimeLog(diagnostics);
+
         showAlertBox(@"Python not installed",
-                     @"ZXTouch could not find a working python3 on this device.\n\nOpen Sileo and install the 'python3' package from Procursus, then reinstall ZXTouch so it can register the new interpreter.",
+                     @"ZXTouch could not find a working python3 on this device.\n\nIf python3 is installed from Sileo already, open Logs: the interpreter search is recorded there and shows which paths were checked and why each was rejected.",
                      999);
         isPlaying = false;
         return;
