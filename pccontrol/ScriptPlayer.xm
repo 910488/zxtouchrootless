@@ -509,7 +509,7 @@ static NSString *ZXPythonModulePath(void)
             // shell was unusable. Common on semi-jailbreaks with stripped
             // entitlements. Check Console.app for `system2` NSLog output.
             title = @"Script could not launch";
-            message = @"ZXTouch could not start a shell to run the script (posix_spawn failed).\n\nOpen Console.app (or `oslog`) and search for `com.zjx.springboard: system2` to see the exact error.";
+            message = @"ZXTouch could not start a shell to run the script (posix_spawn failed).\n\nOpen Logs: the exact error and the shell path it tried are recorded there.";
         } else if (pythonExitCode == 134 && dyldLibpythonMissing) {
             // 134 = SIGABRT. Dyld couldn't find libpython — the interpreter
             // was linked against a path that doesn't exist on this JB (classic

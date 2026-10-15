@@ -232,7 +232,10 @@ pid_t system2Cancelable(const char *command, int *infp, int *outfp,
             if (zxPathLooksExecutable(candidates[i])) { shellPath = candidates[i]; break; }
         }
         if (!shellPath) {
-            NSLog(@"com.zjx.springboard: system2 could not locate a usable /bin/sh");
+            NSString *report = [NSString stringWithFormat:
+                @"ZXTouch: no usable shell found. jbroot(\"/bin/sh\") = %@", jbroot(@"/bin/sh")];
+            NSLog(@"com.zjx.springboard: %@", report);
+            zxAppendRuntimeLog(report);
             close(p_stdin[0]); close(p_stdin[1]);
             close(p_stdout[0]); close(p_stdout[1]);
             return -1;
@@ -289,8 +292,25 @@ pid_t system2Cancelable(const char *command, int *infp, int *outfp,
     posix_spawnattr_destroy(&attrs);
 
     if (spawnErr != 0) {
-        NSLog(@"com.zjx.springboard: system2 posix_spawn(%s) failed: %s (%d)",
-              shellPath, strerror(spawnErr), spawnErr);
+        // Put this in the log the app shows. Telling a user to open Console.app
+        // is useless in practice, and the errno is the whole diagnosis: EPERM
+        // means the sandbox refused the exec, ENOENT means the path is wrong.
+        NSString *report = [NSString stringWithFormat:
+            @"ZXTouch: posix_spawn(%s) failed: %s (errno %d). command=%.120s",
+            shellPath, strerror(spawnErr), spawnErr, command];
+        NSLog(@"com.zjx.springboard: %@", report);
+        zxAppendRuntimeLog(report);
+
+        struct stat sst;
+        if (stat(shellPath, &sst) == 0) {
+            zxAppendRuntimeLog([NSString stringWithFormat:
+                @"ZXTouch: shell %s exists, mode=%04o, size=%lld",
+                shellPath, sst.st_mode & 07777, (long long)sst.st_size]);
+        } else {
+            zxAppendRuntimeLog([NSString stringWithFormat:
+                @"ZXTouch: shell %s cannot be stat'd: %s", shellPath, strerror(errno)]);
+        }
+
         close(p_stdin[0]); close(p_stdin[1]);
         close(p_stdout[0]); close(p_stdout[1]);
         return -1;
