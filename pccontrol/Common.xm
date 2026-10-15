@@ -335,12 +335,30 @@ pid_t system2Cancelable(const char *command, int *infp, int *outfp,
                 close(p_stdin[0]); close(p_stdin[1]);
                 close(p_stdout[0]); close(p_stdout[1]);
                 execve(shellPath, argv, environ);
-                _exit(127);
+
+                // execve failed. stderr is already pointed at the pipe that
+                // feeds the log, so report the reason there. Only
+                // async-signal-safe calls are allowed between fork and exec,
+                // which rules out NSLog and friends.
+                int execErrno = errno;
+                const char *prefix = "ZXTouch: execve failed: ";
+                write(STDERR_FILENO, prefix, strlen(prefix));
+                const char *reason = strerror(execErrno);
+                if (reason) write(STDERR_FILENO, reason, strlen(reason));
+                write(STDERR_FILENO, "\n", 1);
+
+                // 125, not 127: the shell itself uses 126 and 127 for "found
+                // but not executable" and "not found", so a distinct code keeps
+                // "our exec failed" apart from "the shell could not run python".
+                _exit(125);
             }
 
             if (pid > 0) {
+                // Only fork() is known to have worked at this point. Whether the
+                // execve in the child succeeded is reported by the child itself,
+                // either through its output or through exit code 125.
                 zxAppendRuntimeLog([NSString stringWithFormat:
-                    @"ZXTouch: fork + execve succeeded (pid %d).", pid]);
+                    @"ZXTouch: fork succeeded (pid %d), exec result follows.", pid]);
                 goto spawned;
             }
 

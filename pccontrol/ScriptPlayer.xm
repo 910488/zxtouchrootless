@@ -516,6 +516,12 @@ static NSString *ZXPythonModulePath(void)
             // Procursus python3.7 on rootless).
             title = @"Python interpreter is broken";
             message = @"The installed python3 aborted at launch because dyld cannot find its libpython dylib.\n\nInstall the 'python3' package (3.9 or newer) from Sileo (Procursus), then reinstall ZXTouch so it re-picks the working interpreter.";
+        } else if (pythonExitCode == 125) {
+            title = @"Script could not launch";
+            message = @"ZXTouch started a process but the system refused to run a shell inside it.\n\nOpen Logs: the line beginning 'execve failed' gives the exact reason.";
+        } else if (pythonExitCode == 127) {
+            title = @"Python could not be run";
+            message = @"The shell started but could not run python3.\n\nOpen Logs for the exact error. If python3 is not installed, install it from Sileo (Procursus).";
         } else {
             message = [NSString stringWithFormat:@"Python script exited with code %d. Open Logs for the traceback.", pythonExitCode];
         }
