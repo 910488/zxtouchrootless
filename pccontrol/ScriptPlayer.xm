@@ -135,38 +135,7 @@ static NSString *ZXPythonDiagnostics(void)
     return [lines componentsJoinedByString:@"\n"];
 }
 
-// Write to the same log the app's Logs tab reads. A failure here happens before
-// any script launches, so the shell wrapper that normally writes this file never
-// runs, and the user is left with an empty log and nothing to report.
-static void ZXAppendToRuntimeLog(NSString *text)
-{
-    NSString *logPath = @"/var/mobile/Library/ZXTouch/coreutils/ScriptRuntime/output";
-    NSFileManager *fm = [NSFileManager defaultManager];
 
-    NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
-    formatter.dateFormat = @"MM-dd-yyyy HH:mm:ss";
-    NSString *stamped = [NSString stringWithFormat:@"%@: %@\n", [formatter stringFromDate:[NSDate date]], text];
-
-    if (![fm fileExistsAtPath:logPath]) {
-        [fm createDirectoryAtPath:[logPath stringByDeletingLastPathComponent]
-      withIntermediateDirectories:YES attributes:nil error:nil];
-        [stamped writeToFile:logPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
-        return;
-    }
-
-    NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:logPath];
-    if (!handle) return;
-    @try {
-        [handle seekToEndOfFile];
-        [handle writeData:[stamped dataUsingEncoding:NSUTF8StringEncoding]];
-    }
-    @catch (NSException *exception) {
-        NSLog(@"com.zjx.springboard: could not append to runtime log: %@", exception.reason);
-    }
-    @finally {
-        [handle closeFile];
-    }
-}
 
 static NSString *ZXShellPath(void)
 {
@@ -478,7 +447,7 @@ static NSString *ZXPythonModulePath(void)
     {
         NSString *diagnostics = ZXPythonDiagnostics();
         NSLog(@"com.zjx.springboard: %@", diagnostics);
-        ZXAppendToRuntimeLog(diagnostics);
+        zxAppendRuntimeLog(diagnostics);
 
         showAlertBox(@"Python not installed",
                      @"ZXTouch could not find a working python3 on this device.\n\nIf python3 is installed from Sileo already, open Logs: the interpreter search is recorded there and shows which paths were checked and why each was rejected.",

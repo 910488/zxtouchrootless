@@ -254,6 +254,11 @@ void applyPanelDarkMode(BOOL dark) {
             btn.tintColor = [UIColor labelColor];
             NSString *fullPath = item[@"path"];
             [btn addAction:[UIAction actionWithTitle:@"" image:nil identifier:nil handler:^(__kindof UIAction *a) {
+                // Logged because a play button that silently does nothing is
+                // otherwise indistinguishable from one whose tap never fired.
+                zxAppendRuntimeLog([NSString stringWithFormat:
+                    @"ZXTouch: panel play tapped. settingsMode=%@ path=%@",
+                    _settingsVisible ? @"on" : @"off", fullPath]);
                 if (_settingsVisible) {
                     UIAlertController *alert = [UIAlertController
                         alertControllerWithTitle:@"Play Settings"
@@ -293,7 +298,15 @@ void applyPanelDarkMode(BOOL dark) {
                     }]];
                     [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
                     dispatch_async(dispatch_get_main_queue(), ^{
-                        [_window.rootViewController presentViewController:alert animated:YES completion:nil];
+                        UIViewController *presenter = _window.rootViewController;
+                        zxAppendRuntimeLog([NSString stringWithFormat:
+                            @"ZXTouch: presenting play settings. rootVC=%@ windowHidden=%@ alreadyPresenting=%@",
+                            presenter ?: @"(nil)",
+                            _window.hidden ? @"yes" : @"no",
+                            presenter.presentedViewController ? @"yes" : @"no"]);
+                        [presenter presentViewController:alert animated:YES completion:^{
+                            zxAppendRuntimeLog(@"ZXTouch: play settings dialog presented.");
+                        }];
                     });
                 } else {
                     // Direct play
@@ -301,7 +314,10 @@ void applyPanelDarkMode(BOOL dark) {
                     [self saveSettings:_repeatCount speed:_speed interval:_interval enabled:NO];
                     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
                         NSError *err = nil;
-                        playScriptWithSettings((UInt8*)[fullPath UTF8String], 0, 1.0f, 0.0f, &err);
+                        int rc = playScriptWithSettings((UInt8*)[fullPath UTF8String], 0, 1.0f, 0.0f, &err);
+                        zxAppendRuntimeLog([NSString stringWithFormat:
+                            @"ZXTouch: panel direct play returned %d%@", rc,
+                            err ? [@", error: " stringByAppendingString:[err localizedDescription]] : @""]);
                         if (err) showAlertBox(@"Error", [err localizedDescription], 999);
                     });
                 }
