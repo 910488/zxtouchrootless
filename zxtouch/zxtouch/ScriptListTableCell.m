@@ -64,7 +64,13 @@
     
     [springBoardSocket send:[NSString stringWithFormat:@"19%@", filePath]];
     NSString* result = [springBoardSocket recv:1024];
-    if ([result characterAtIndex:0] != '0')
+    if (result.length == 0)
+    {
+        // Empty means the socket timed out or closed with no reply. Indexing
+        // into it would raise an NSRangeException and take the app down.
+        [Util showAlertBoxWithOneOption:_parentViewController title:@"Error" message:@"ZXTouch did not respond. Make sure the tweak is running, then try again." buttonString:@"OK"];
+    }
+    else if ([result characterAtIndex:0] != '0')
     {
         [Util showAlertBoxWithOneOption:_parentViewController title:@"Error" message:[NSString stringWithFormat:@"Cannot play script. Error: %@", result] buttonString:@"OK"];
     }
