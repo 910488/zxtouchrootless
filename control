@@ -3,7 +3,7 @@ Name: ZXTouch
 Version: 1.0.1
 Depends: mobilesubstrate | ellekit, firmware (>= 15.0)
 Architecture: iphoneos-arm64
-Description: ZXTouch Main Application (rootless, iOS 15-16)
+Description: ZXTouch Main Application (iOS 15-18)
 Maintainer: Jason Z
 Author: Jason Z
 Section: Utilities

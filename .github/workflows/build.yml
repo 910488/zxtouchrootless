@@ -153,7 +153,7 @@ jobs:
 
             | File | Jailbreak | iOS |
             |------|-----------|-----|
-            | `*_rootless.deb` | Dopamine, Dopamine 3, NathanLR | 15.0 - 17.7 |
+            | `*_rootless.deb` | Dopamine, Dopamine 3, NathanLR | 15.0 - 18.x |
             | `*_roothide.deb` | Roothide / Serotonin | 15.0 - 16.6.1 |
 
             ### Installation

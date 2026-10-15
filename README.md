@@ -1,6 +1,6 @@
 # ZXTouch Rootless
 
-Rootless and roothide port of ZXTouch for iOS 15 to 17, maintained by [Epic0001](https://github.com/Epic0001/zxtouchrootless).
+Rootless and roothide port of ZXTouch for iOS 15 to 18, maintained by [Epic0001](https://github.com/Epic0001/zxtouchrootless).
 
 A system-wide touch simulation library for iOS. It simulates touches, plays back recordings, and runs automation scripts without injecting into any app process.
 
@@ -18,11 +18,11 @@ Discord: https://discord.gg/acSXfyz
 | Dopamine (rootless) | 16.4.1, 16.6.1 | Working |
 | NathanLR (rootless, semi-untethered) | 16.5.1 to 16.6.1 | Working, install `_rootless.deb` |
 | Dopamine 3 (rootless) | 17.0 to 17.7 | Working, tested on 17.6 |
-| Dopamine 3 (rootless) | 18.x | Untested |
+| Dopamine 3 (rootless) | 18.x | Working, tested on 18.5 |
 
 iOS 17 is tested on an iPad 7th generation running 17.6 with Dopamine 3 and ElleKit.
 
-iOS 18 has not been tested. The same rootless build should install, since Dopamine 3 uses the same bootstrap layout, but nothing on 18 has been verified. Reports are welcome in Discord or the issue tracker.
+iOS 18 is tested on 18.5 with Dopamine 3. iOS 18 does not let SpringBoard start processes, so on 18 scripts are run by zxtouch-runner, a small background daemon the package installs. It runs as `mobile`, so scripts have the same permissions they have on earlier versions.
 
 ---
 
@@ -30,7 +30,7 @@ iOS 18 has not been tested. The same rootless build should install, since Dopami
 
 Compared to the original ZXTouch:
 
-- Runs on iOS 15 to 17 under rootless (Dopamine, Dopamine 3, NathanLR) and roothide (Serotonin)
+- Runs on iOS 15 to 18 under rootless (Dopamine, Dopamine 3, NathanLR) and roothide (Serotonin)
 - `image_match` rebuilt on `Accelerate.framework`, so OpenCV is gone and the package stays small
 - Color picker, color searcher, OCR, and volume-down stop all work again
 - Python scripts auto-detect Procursus Python 3.8 to 3.12, prefer versioned interpreters over the `python3` symlink, and report real tracebacks
@@ -45,8 +45,8 @@ Python 3 from Procursus is required for `.py` scripts on every jailbreak. Instal
 
 Dopamine and Dopamine 3 (rootless):
 
-- iOS 15.0 to 17.7
-- [Dopamine](https://ellekit.space/dopamine/), with Dopamine 3 for iOS 17
+- iOS 15.0 to 18
+- [Dopamine](https://ellekit.space/dopamine/), with Dopamine 3 for iOS 17 and 18
 
 NathanLR (rootless, iOS 16.5.1 to 16.6.1):
 
@@ -689,5 +689,5 @@ See [`.github/workflows/build.yml`](.github/workflows/build.yml).
 
 | | |
 |--|--|
-| iOS 15 to 17 rootless and roothide port | [Epic0001](https://github.com/Epic0001) |
+| iOS 15 to 18 rootless and roothide port | [Epic0001](https://github.com/Epic0001) |
 | Original ZXTouch | [xuan32546](https://github.com/xuan32546) |
