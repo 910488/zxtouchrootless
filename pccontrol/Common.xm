@@ -311,10 +311,49 @@ pid_t system2Cancelable(const char *command, int *infp, int *outfp,
                 @"ZXTouch: shell %s cannot be stat'd: %s", shellPath, strerror(errno)]);
         }
 
+        // Dopamine's own 2.2.2 changelog records that certain sandbox profiles
+        // "block posix_spawn but allow execve". SpringBoard on iOS 18 behaves
+        // exactly that way: the shell is present and mode 0755, yet the spawn
+        // is refused with EPERM while the same binary runs fine from a shell.
+        // So fall back to fork + execve rather than giving up.
+        //
+        // posix_spawn stays the primary path on purpose. Raw fork() is itself
+        // denied inside SpringBoard on some other jailbreaks (that is why this
+        // function stopped using fork in the first place), so neither call
+        // works everywhere and each covers the other's gap.
+        if (spawnErr == EPERM) {
+            zxAppendRuntimeLog(@"ZXTouch: retrying with fork + execve.");
+
+            pid = fork();
+            if (pid == 0) {
+                // Child. Nothing here may allocate or call into Objective-C:
+                // only async-signal-safe syscalls between fork and execve.
+                if (processGroup) setpgid(0, 0);
+                dup2(p_stdin[0], STDIN_FILENO);
+                dup2(p_stdout[1], STDOUT_FILENO);
+                dup2(p_stdout[1], STDERR_FILENO);
+                close(p_stdin[0]); close(p_stdin[1]);
+                close(p_stdout[0]); close(p_stdout[1]);
+                execve(shellPath, argv, environ);
+                _exit(127);
+            }
+
+            if (pid > 0) {
+                zxAppendRuntimeLog([NSString stringWithFormat:
+                    @"ZXTouch: fork + execve succeeded (pid %d).", pid]);
+                goto spawned;
+            }
+
+            zxAppendRuntimeLog([NSString stringWithFormat:
+                @"ZXTouch: fork also failed: %s", strerror(errno)]);
+        }
+
         close(p_stdin[0]); close(p_stdin[1]);
         close(p_stdout[0]); close(p_stdout[1]);
         return -1;
     }
+
+spawned:
     if (processGroup) *processGroup = pid;
     if (cancelRequested && *cancelRequested) {
         kill(-pid, SIGKILL);
