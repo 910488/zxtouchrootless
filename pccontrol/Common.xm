@@ -9,6 +9,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <limits.h>
 
 
 // Does this path look like a runnable program?
@@ -190,6 +191,112 @@ void swapCGFloat(CGFloat *a, CGFloat *b)
 	*b = temp;
 }
 
+
+// ---------------------------------------------------------------------------
+// Dopamine exec grant
+//
+// At launch, Dopamine's dyldhook checks every process in with jbserver and
+// consumes the sandbox extensions it hands back, one of which is
+// com.apple.sandbox.executable for the whole jbroot. That grant is what lets a
+// sandboxed process exec jailbreak binaries at all.
+//
+// On iOS 18.5 + Dopamine 3, SpringBoard was refused both posix_spawn and execve
+// (EPERM) on a shell that exists and is mode 0755, while the same binary runs
+// fine from a terminal. That is the signature of the grant being absent. iOS 18
+// uses a different dyldhook build that locates jbserver differently, so the
+// launch-time check-in is the likely casualty.
+//
+// jbclient_process_checkin is the same request, made over XPC instead of the
+// raw Mach path, and libjailbreak exports it. Redo it and consume the result.
+// ---------------------------------------------------------------------------
+typedef int (*zx_jb_checkin_t)(char **, char **, char **, bool *, bool *);
+typedef int64_t (*zx_sb_consume_t)(const char *);
+typedef int (*zx_sb_check_t)(pid_t, const char *, int, ...);
+
+static void zxLogSandboxState(const char *path, const char *when)
+{
+    int accessOK = access(path, X_OK) == 0;
+    int accessErr = errno;
+
+    zx_sb_check_t check = (zx_sb_check_t)dlsym(RTLD_DEFAULT, "sandbox_check");
+    const int *noReport = (const int *)dlsym(RTLD_DEFAULT, "SANDBOX_CHECK_NO_REPORT");
+    int sandboxed = -2, execDenied = -2;
+    if (check) {
+        int pathFilter = 1; // SANDBOX_FILTER_PATH
+        sandboxed = check(getpid(), NULL, 0);
+        execDenied = check(getpid(), "process-exec*", pathFilter | (noReport ? *noReport : 0), path);
+    }
+
+    zxAppendRuntimeLog([NSString stringWithFormat:
+        @"ZXTouch: sandbox state %s: sandboxed=%d exec-denied=%d access(X_OK)=%s",
+        when, sandboxed, execDenied, accessOK ? "ok" : strerror(accessErr)]);
+}
+
+static BOOL zxReacquireJailbreakExecGrant(const char *shellPath)
+{
+    // Once per SpringBoard lifetime. Consuming the same extensions repeatedly
+    // would only pile up handles, and the answer will not change.
+    static dispatch_once_t once;
+    static BOOL acquired = NO;
+
+    dispatch_once(&once, ^{
+        zxLogSandboxState(shellPath, "before re-checkin");
+
+        // NSString overload on purpose: the C-string jbroot() writes into one
+        // static buffer shared by every caller, and shellPath may point into it.
+        void *lib = dlopen([jbroot(@"/basebin/libjailbreak.dylib") fileSystemRepresentation], RTLD_NOW);
+        if (!lib) lib = dlopen("/var/jb/basebin/libjailbreak.dylib", RTLD_NOW);
+        if (!lib) {
+            const char *err = dlerror();
+            zxAppendRuntimeLog([NSString stringWithFormat:
+                @"ZXTouch: could not load libjailbreak: %s", err ? err : "unknown"]);
+            return;
+        }
+
+        zx_jb_checkin_t checkin = (zx_jb_checkin_t)dlsym(lib, "jbclient_process_checkin");
+        zx_sb_consume_t consume = (zx_sb_consume_t)dlsym(RTLD_DEFAULT, "sandbox_extension_consume");
+        if (!checkin || !consume) {
+            zxAppendRuntimeLog([NSString stringWithFormat:
+                @"ZXTouch: missing symbols (checkin=%s consume=%s)",
+                checkin ? "yes" : "no", consume ? "yes" : "no"]);
+            return;
+        }
+
+        char *rootPath = NULL, *bootUUID = NULL, *extensions = NULL;
+        bool fullyDebugged = false, forceCSAdhoc = false;
+        int rc = checkin(&rootPath, &bootUUID, &extensions, &fullyDebugged, &forceCSAdhoc);
+
+        int tokenCount = 0;
+        BOOL hasExecutable = NO;
+        if (extensions && extensions[0]) {
+            tokenCount = 1;
+            for (const char *c = extensions; *c; c++) if (*c == '|') tokenCount++;
+            hasExecutable = strstr(extensions, "executable") != NULL;
+        }
+        // The tokens themselves are capabilities, so only their shape is logged.
+        zxAppendRuntimeLog([NSString stringWithFormat:
+            @"ZXTouch: jbclient_process_checkin rc=%d root=%s extensions=%d executable-class=%s",
+            rc, rootPath ? rootPath : "(null)", tokenCount, hasExecutable ? "present" : "not seen"]);
+
+        int consumed = 0, failed = 0;
+        if (extensions) {
+            char *save = NULL;
+            for (char *tok = strtok_r(extensions, "|", &save); tok; tok = strtok_r(NULL, "|", &save)) {
+                if (consume(tok) >= 0) consumed++; else failed++;
+            }
+        }
+        free(rootPath); free(bootUUID); free(extensions);
+
+        zxAppendRuntimeLog([NSString stringWithFormat:
+            @"ZXTouch: consumed %d sandbox extension(s), %d failed.", consumed, failed]);
+        zxLogSandboxState(shellPath, "after re-checkin");
+
+        acquired = (rc == 0 && consumed > 0);
+    });
+
+    return acquired;
+}
+
 // Spawn `/bin/sh -c command` via posix_spawn. Raw fork() is blocked by the
 // sandbox in a SpringBoard-injected tweak on some jailbreaks (palera1n-rootless,
 // certain roothide setups), which surfaces to users as "Python script exited
@@ -243,6 +350,14 @@ pid_t system2Cancelable(const char *command, int *infp, int *outfp,
         }
     }
 
+    // jbroot() returns a pointer into a single static buffer shared by every
+    // caller in the process. Copy it now: any later jbroot() call, here or on
+    // another thread running a different script, would otherwise rewrite the
+    // path out from under us mid-spawn.
+    char shellPathBuf[PATH_MAX];
+    strlcpy(shellPathBuf, shellPath, sizeof(shellPathBuf));
+    shellPath = shellPathBuf;
+
     posix_spawn_file_actions_t actions;
     posix_spawn_file_actions_init(&actions);
 
@@ -289,6 +404,19 @@ pid_t system2Cancelable(const char *command, int *infp, int *outfp,
 
     pid_t pid = 0;
     int spawnErr = posix_spawn(&pid, shellPath, &actions, &attrs, argv, environ);
+
+    if (spawnErr == EPERM) {
+        // Most likely the Dopamine exec grant is missing. Re-acquire it the way
+        // dyldhook would have at launch, then try the spawn once more before
+        // falling back further.
+        zxReacquireJailbreakExecGrant(shellPath);
+        pid = 0;
+        spawnErr = posix_spawn(&pid, shellPath, &actions, &attrs, argv, environ);
+        zxAppendRuntimeLog([NSString stringWithFormat:
+            @"ZXTouch: posix_spawn after re-checkin: %s",
+            spawnErr == 0 ? "succeeded" : strerror(spawnErr)]);
+    }
+
     posix_spawn_file_actions_destroy(&actions);
     posix_spawnattr_destroy(&attrs);
 
