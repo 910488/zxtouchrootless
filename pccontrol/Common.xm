@@ -1,5 +1,6 @@
 #include "Common.h"
 #include "Config.h"
+#include "Runner.h"
 #import <sys/utsname.h>
 #import <sys/wait.h>
 #include <dlfcn.h>
@@ -306,9 +307,41 @@ pid_t system2(const char *command, int *infp, int *outfp)
     return system2Cancelable(command, infp, outfp, NULL, NULL);
 }
 
+// Set once SpringBoard has been refused a spawn even after re-acquiring the
+// Dopamine exec grant. That does not change for the life of the process, so
+// later calls go straight to zxtouch-runner instead of failing again first.
+static volatile BOOL gInProcessSpawnBlocked = NO;
+
+// Returns YES if the runner took the job, with its result in *result.
+static BOOL zxRunThroughRunner(const char *command, pid_t *processGroup,
+                               volatile sig_atomic_t *cancelRequested, int *result)
+{
+    // Allow for the runner reconnecting right after a respring.
+    if (!zxRunnerWaitAvailable(5.0)) {
+        zxAppendRuntimeLog(@"ZXTouch: SpringBoard cannot start processes on this system and zxtouch-runner is not connected. Reinstall ZXTouch, or reboot and re-jailbreak, so the runner daemon is loaded.");
+        return NO;
+    }
+
+    static dispatch_once_t announced;
+    dispatch_once(&announced, ^{
+        zxAppendRuntimeLog(@"ZXTouch: SpringBoard is not allowed to start processes on this system, so scripts run through zxtouch-runner.");
+    });
+
+    *result = zxRunnerRunCommand(command, processGroup, cancelRequested);
+    return YES;
+}
+
 pid_t system2Cancelable(const char *command, int *infp, int *outfp,
                         pid_t *processGroup, volatile sig_atomic_t *cancelRequested)
 {
+    // The runner hands back an exit status, not pipes, so it can only serve
+    // callers that do not want any. Every current caller passes NULL for both.
+    if (gInProcessSpawnBlocked && infp == NULL && outfp == NULL) {
+        int result = -1;
+        zxRunThroughRunner(command, processGroup, cancelRequested, &result);
+        return result;
+    }
+
     int p_stdin[2] = {-1, -1};
     int p_stdout[2] = {-1, -1};
     if (processGroup) *processGroup = 0;
@@ -451,6 +484,17 @@ pid_t system2Cancelable(const char *command, int *infp, int *outfp,
         // function stopped using fork in the first place), so neither call
         // works everywhere and each covers the other's gap.
         if (spawnErr == EPERM) {
+            gInProcessSpawnBlocked = YES;
+
+            if (infp == NULL && outfp == NULL) {
+                int result = -1;
+                if (zxRunThroughRunner(command, processGroup, cancelRequested, &result)) {
+                    close(p_stdin[0]); close(p_stdin[1]);
+                    close(p_stdout[0]); close(p_stdout[1]);
+                    return result;
+                }
+            }
+
             zxAppendRuntimeLog(@"ZXTouch: retrying with fork + execve.");
 
             pid = fork();

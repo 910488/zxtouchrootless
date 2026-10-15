@@ -3,6 +3,7 @@
 
 #include "SocketServer.h"
 #include "Task.h"
+#include "Runner.h"
 
 
 CFSocketRef socketRef;
@@ -11,6 +12,9 @@ CFReadStreamRef readStreamRef = NULL;
 static NSMutableDictionary *socketClients = NULL;
 static NSMutableDictionary *socketClientBuffers = NULL;
 static NSMutableDictionary *socketClientQueues = NULL;
+// Write streams of clients connected from this device. Read from task queues
+// and written from the run loop thread, so access goes through @synchronized.
+static NSMutableSet *socketLoopbackClients = NULL;
 void report_memory(void);
 
 // Reference: https://www.jianshu.com/p/9353105a9129
@@ -51,6 +55,7 @@ void socketServer()
         socketClients = [[NSMutableDictionary alloc] init];
         socketClientBuffers = [[NSMutableDictionary alloc] init];
         socketClientQueues = [[NSMutableDictionary alloc] init];
+        socketLoopbackClients = [[NSMutableSet alloc] init];
 
         NSLog(@"### com.zjx.springboard: connection waiting");
         CFRunLoopRef cfrunLoop = CFRunLoopGetCurrent();
@@ -75,6 +80,14 @@ static void readStream(CFReadStreamRef readStream, CFStreamEventType eventype, v
     {
         // The client disconnected. Drop its state, otherwise the dictionaries
         // grow by one entry per connection for as long as SpringBoard runs.
+        id closingWriteStream = [socketClients objectForKey:clientKey];
+        if (closingWriteStream != nil) {
+            zxRunnerStreamClosed((CFWriteStreamRef)[closingWriteStream longValue]);
+            @synchronized (socketLoopbackClients) {
+                [socketLoopbackClients removeObject:closingWriteStream];
+            }
+        }
+
         [socketClients removeObjectForKey:clientKey];
         [socketClientBuffers removeObjectForKey:clientKey];
         [socketClientQueues removeObjectForKey:clientKey];
@@ -250,6 +263,12 @@ static void TCPServerAcceptCallBack(CFSocketRef socket, CFSocketCallBackType typ
             CFReadStreamScheduleWithRunLoop(readStreamRef, CFRunLoopGetCurrent(), kCFRunLoopCommonModes);
 
 			[socketClients setObject:@((long)writeStreamRef) forKey:@((long)readStreamRef)];
+
+            if ((ntohl(addr_in->sin_addr.s_addr) >> 24) == 127) {
+                @synchronized (socketLoopbackClients) {
+                    [socketLoopbackClients addObject:@((long)writeStreamRef)];
+                }
+            }
             [socketClientBuffers setObject:[NSMutableData data] forKey:@((long)readStreamRef)];
 
             dispatch_queue_t clientQueue =
@@ -268,4 +287,12 @@ static void TCPServerAcceptCallBack(CFSocketRef socket, CFSocketCallBackType typ
 		
     }
     
+}
+
+BOOL zxSocketClientIsLoopback(CFWriteStreamRef client)
+{
+    if (!client || !socketLoopbackClients) return NO;
+    @synchronized (socketLoopbackClients) {
+        return [socketLoopbackClients containsObject:@((long)client)];
+    }
 }

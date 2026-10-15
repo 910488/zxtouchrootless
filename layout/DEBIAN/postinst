@@ -108,6 +108,45 @@ if [ -x /var/jb/usr/bin/ldid ]; then
     /var/jb/usr/bin/ldid -S/tmp/zxtouch-ent.plist "$APP/zxtouch"
 fi
 
+# zxtouch-runner. On iOS 18 SpringBoard is not allowed to start processes, so
+# scripts are handed to this daemon instead. It runs as mobile, so scripts keep
+# exactly the permissions they had when SpringBoard started them.
+RUNNER=/var/jb/usr/libexec/zxtouch-runner
+RUNNER_DIR=/var/jb/Library/LaunchDaemons
+RUNNER_PLIST="$RUNNER_DIR/com.zjx.zxtouch.runner.plist"
+LAUNCHCTL=/var/jb/usr/bin/launchctl
+[ -x "$LAUNCHCTL" ] || LAUNCHCTL=launchctl
+if [ -x "$RUNNER" ]; then
+    mkdir -p "$RUNNER_DIR"
+    cat > "$RUNNER_PLIST" << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.zjx.zxtouch.runner</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>$RUNNER</string>
+    </array>
+    <key>UserName</key>
+    <string>mobile</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>5</integer>
+</dict>
+</plist>
+EOF
+    chown root:wheel "$RUNNER_PLIST"
+    chmod 644 "$RUNNER_PLIST"
+    # Unload first so an upgrade picks up the new binary.
+    "$LAUNCHCTL" unload "$RUNNER_PLIST" 2>/dev/null || true
+    "$LAUNCHCTL" load -w "$RUNNER_PLIST" 2>/dev/null || true
+fi
+
 # Never restart SpringBoard from a maintainer script. Package managers run this
 # inside the dpkg transaction, so a restart can kill their helper before dpkg
 # records the package as configured. Sileo can offer a respring after dpkg exits.

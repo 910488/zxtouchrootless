@@ -28,6 +28,10 @@
 #define TASK_SCREENSHOT 30
 
 
+// Used only by zxtouch-runner on its own connection. See Runner.h.
+#define TASK_RUNNER_REGISTER 40
+#define TASK_RUNNER_EVENT 41
+
 #define TASK_UPDATE_CACHE 90
 
 #define TASK_TEST 99

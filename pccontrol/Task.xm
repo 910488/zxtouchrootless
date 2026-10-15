@@ -18,6 +18,7 @@
 #include <TextRecognization/TextRecognizer.h>
 #include "UpdateCache.h"
 #include "Screen.h"
+#include "Runner.h"
 
 extern CFRunLoopRef recordRunLoop;
 
@@ -396,6 +397,16 @@ void processTask(UInt8 *buff, CFWriteStreamRef writeStreamRef)
                 notifyClient((UInt8*)[@"0\r\n" UTF8String], writeStreamRef);
             }
         }
+    }
+    else if (taskType == TASK_RUNNER_REGISTER)
+    {
+        // No reply on purpose: this connection is the runner's job channel and
+        // it reads every line written to it as an instruction.
+        zxRunnerRegister((const char *)eventData, writeStreamRef);
+    }
+    else if (taskType == TASK_RUNNER_EVENT)
+    {
+        zxRunnerHandleEvent((const char *)eventData, writeStreamRef);
     }
     else if (taskType == TASK_TEST)
     {

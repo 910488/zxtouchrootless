@@ -1,0 +1,21 @@
+#!/bin/sh
+# Stop zxtouch-runner before dpkg removes its binary.
+if command -v jbroot >/dev/null 2>&1; then
+    RUNNER_PLIST=$(jbroot /Library/LaunchDaemons/com.zjx.zxtouch.runner.plist)
+    LAUNCHCTL=$(jbroot /usr/bin/launchctl)
+else
+    RUNNER_PLIST=/var/jb/Library/LaunchDaemons/com.zjx.zxtouch.runner.plist
+    LAUNCHCTL=/var/jb/usr/bin/launchctl
+fi
+[ -x "$LAUNCHCTL" ] || LAUNCHCTL=launchctl
+
+if [ -f "$RUNNER_PLIST" ]; then
+    "$LAUNCHCTL" unload "$RUNNER_PLIST" 2>/dev/null || true
+    # The postinst writes this file, so dpkg does not know to remove it.
+    # Keep it on upgrade; the new postinst rewrites and reloads it.
+    case "$1" in
+        remove|purge) rm -f "$RUNNER_PLIST" ;;
+    esac
+fi
+
+exit 0

@@ -17,4 +17,5 @@ static void readStream(CFReadStreamRef readStream, CFStreamEventType eventype, v
 static void TCPServerAcceptCallBack(CFSocketRef socket, CFSocketCallBackType type, CFDataRef address, const void *data, void *info);
 int notifyClient(UInt8* msg, CFWriteStreamRef client);
 int notifyClientData(const UInt8 *data, CFIndex length, CFWriteStreamRef client);
+BOOL zxSocketClientIsLoopback(CFWriteStreamRef client);
 
