@@ -23,9 +23,11 @@ static NSString *ZXShellQuote(NSString *value)
 
 static NSString *ZXFirstExecutablePath(NSArray<NSString *> *candidates)
 {
-    NSFileManager *fm = [NSFileManager defaultManager];
+    // zxPathLooksExecutable deliberately avoids isExecutableFileAtPath:, which
+    // reports NO inside SpringBoard on iOS 18 even for an installed, mode 0755
+    // interpreter. See the comment on it in Common.xm.
     for (NSString *path in candidates) {
-        if (path.length > 0 && [fm isExecutableFileAtPath:path]) {
+        if (path.length > 0 && zxPathLooksExecutable(path.fileSystemRepresentation)) {
             return path;
         }
     }

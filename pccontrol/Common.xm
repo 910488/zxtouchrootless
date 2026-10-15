@@ -6,6 +6,32 @@
 #include <spawn.h>
 #include <errno.h>
 #include <string.h>
+#include <unistd.h>
+#include <sys/stat.h>
+
+
+// Does this path look like a runnable program?
+//
+// Deliberately NOT access(X_OK) or isExecutableFileAtPath:. Those ask "may THIS
+// process exec this file", and this process is SpringBoard. On iOS 18 the
+// sandbox answers EPERM for Procursus binaries that plainly exist, are readable
+// and are mode 0755, so a perfectly good python3 was reported missing and
+// scripts refused to run.
+//
+// SpringBoard never execs the interpreter itself. It posix_spawns /bin/sh and
+// the shell execs it, under the shell's own sandbox. So the question to ask
+// here is only whether the file is a regular file carrying an execute bit, and
+// to let the spawn report a real failure if there is one.
+Boolean zxPathLooksExecutable(const char *path)
+{
+    if (!path || !*path) return false;
+
+    struct stat st;
+    if (stat(path, &st) != 0) return false;   // follows symlinks, so python3 -> python3.9 resolves
+    if (!S_ISREG(st.st_mode)) return false;
+
+    return (st.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH)) != 0;
+}
 
 int call_system(const char *cmd)
 {
@@ -159,7 +185,7 @@ pid_t system2Cancelable(const char *command, int *infp, int *outfp,
     }
 
     const char *shellPath = jbroot("/bin/sh");
-    if (!shellPath || access(shellPath, X_OK) != 0) {
+    if (!shellPath || !zxPathLooksExecutable(shellPath)) {
         // jbroot() returned something unusable; try known rootless fallbacks.
         static const char *candidates[] = {
             "/var/jb/bin/sh",
@@ -170,7 +196,7 @@ pid_t system2Cancelable(const char *command, int *infp, int *outfp,
         };
         shellPath = NULL;
         for (int i = 0; candidates[i]; ++i) {
-            if (access(candidates[i], X_OK) == 0) { shellPath = candidates[i]; break; }
+            if (zxPathLooksExecutable(candidates[i])) { shellPath = candidates[i]; break; }
         }
         if (!shellPath) {
             NSLog(@"com.zjx.springboard: system2 could not locate a usable /bin/sh");
