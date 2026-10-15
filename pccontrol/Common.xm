@@ -8,6 +8,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <fcntl.h>
 
 
 // Does this path look like a runnable program?
@@ -328,24 +329,43 @@ pid_t system2Cancelable(const char *command, int *infp, int *outfp,
             if (pid == 0) {
                 // Child. Nothing here may allocate or call into Objective-C:
                 // only async-signal-safe syscalls between fork and execve.
+                //
+                // These redirections must match the posix_spawn file actions
+                // above exactly. Pointing stdout at the pipe when the caller
+                // passed outfp == NULL means writing to a pipe whose read end
+                // the parent closes moments later, and the first write kills the
+                // child with SIGPIPE, which surfaces as exit code 141.
                 if (processGroup) setpgid(0, 0);
                 dup2(p_stdin[0], STDIN_FILENO);
-                dup2(p_stdout[1], STDOUT_FILENO);
-                dup2(p_stdout[1], STDERR_FILENO);
+                if (outfp == NULL) {
+                    int devnull = open("/dev/null", O_WRONLY);
+                    if (devnull >= 0) {
+                        dup2(devnull, STDOUT_FILENO);
+                        dup2(devnull, STDERR_FILENO);
+                        if (devnull > STDERR_FILENO) close(devnull);
+                    }
+                } else {
+                    dup2(p_stdout[1], STDOUT_FILENO);
+                    dup2(p_stdout[1], STDERR_FILENO);
+                }
                 close(p_stdin[0]); close(p_stdin[1]);
                 close(p_stdout[0]); close(p_stdout[1]);
                 execve(shellPath, argv, environ);
 
-                // execve failed. stderr is already pointed at the pipe that
-                // feeds the log, so report the reason there. Only
-                // async-signal-safe calls are allowed between fork and exec,
-                // which rules out NSLog and friends.
+                // execve failed. stderr may be /dev/null at this point, so
+                // append to the log file directly. open and write are
+                // async-signal-safe, unlike anything in Foundation.
                 int execErrno = errno;
-                const char *prefix = "ZXTouch: execve failed: ";
-                write(STDERR_FILENO, prefix, strlen(prefix));
-                const char *reason = strerror(execErrno);
-                if (reason) write(STDERR_FILENO, reason, strlen(reason));
-                write(STDERR_FILENO, "\n", 1);
+                int logFd = open("/var/mobile/Library/ZXTouch/coreutils/ScriptRuntime/output",
+                                 O_WRONLY | O_APPEND | O_CREAT, 0644);
+                if (logFd >= 0) {
+                    const char *prefix = "ZXTouch: execve failed: ";
+                    write(logFd, prefix, strlen(prefix));
+                    const char *reason = strerror(execErrno);
+                    if (reason) write(logFd, reason, strlen(reason));
+                    write(logFd, "\n", 1);
+                    close(logFd);
+                }
 
                 // 125, not 127: the shell itself uses 126 and 127 for "found
                 // but not executable" and "not found", so a distinct code keeps
