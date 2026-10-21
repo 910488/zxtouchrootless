@@ -10,7 +10,7 @@
 #endif
 
 #define PORT 6000
-#define ADDR "0.0.0.0"
+#define ADDR "127.0.0.1"
 
 void socketServer();
 static void readStream(CFReadStreamRef readStream, CFStreamEventType eventype, void * clientCallBackInfo);

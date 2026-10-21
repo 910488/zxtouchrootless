@@ -49,7 +49,7 @@ void zxRunnerRegister(const char *secret, CFWriteStreamRef stream)
 {
     zxRunnerInit();
 
-    // Port 6000 listens on every interface so ZXTouch can be driven over Wi-Fi.
+    // Port 6000 listens on 127.0.0.1 only; remote clients reach it through an SSH or usbmux tunnel.
     // The runner is always local, so a registration from anywhere else is not it.
     if (!zxSocketClientIsLoopback(stream)) {
         zxAppendRuntimeLog(@"ZXTouch: ignored a runner registration from a non-local connection.");
