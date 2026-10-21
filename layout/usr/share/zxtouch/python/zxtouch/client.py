@@ -55,9 +55,20 @@ class zxtouch:
     def _recv_response(self):
         return datahandler.decode_socket_data(self._recv_line())
 
-    def screenshot(self) -> bytes:
-        """Capture the current screen and return its raw JPEG bytes over TCP."""
-        self.s.sendall(datahandler.format_socket_data(tasktypes.TASK_SCREENSHOT))
+    def screenshot(self, scale=None, quality=None) -> bytes:
+        """Capture the current screen and return its raw JPEG bytes over TCP.
+
+        :param scale: optional output size factor, 0.1-1 (default full size)
+        :param quality: optional JPEG quality, 0.1-1 (default 0.85)
+        Builds before 1.0.1+lo3 ignore both and always send full size at 0.85.
+        """
+        if scale is None and quality is None:
+            request = datahandler.format_socket_data(tasktypes.TASK_SCREENSHOT)
+        else:
+            request = datahandler.format_socket_data(tasktypes.TASK_SCREENSHOT,
+                                                     "" if scale is None else "{:g}".format(scale),
+                                                     "" if quality is None else "{:g}".format(quality))
+        self.s.sendall(request)
 
         header = self._recv_line()[:-2]
         fields = header.split(b";;")

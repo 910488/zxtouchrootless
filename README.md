@@ -554,6 +554,12 @@ image.show()
 device.disconnect()
 ```
 
+`screenshot(scale=0.5, quality=0.6)` asks for a smaller image (both 0.1-1;
+the defaults are full size and quality 0.85). Shrinking happens in the same
+redraw that rotates the image, and the phone then encodes and sends far fewer
+bytes. The request is `30<scale>;;<quality>\r\n`; builds before 1.0.1+lo3
+ignore the data and send full size.
+
 The wire response is `0;;image/jpeg;;<CONTENT_LENGTH>\r\n` followed immediately
 by exactly `CONTENT_LENGTH` raw JPEG bytes. Server errors remain text responses
 in the form `-1;;<message>\r\n`.

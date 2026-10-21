@@ -312,6 +312,22 @@ void processTask(UInt8 *buff, CFWriteStreamRef writeStreamRef)
             CGImageRef screenshot = NULL;
             BOOL responseHeaderSent = NO;
 
+            // Optional "<scale>;;<quality>", both 0.1-1: scale shrinks the image
+            // before encoding and quality is the JPEG quality. Without data the
+            // reply stays full size at quality 0.85, as before.
+            CGFloat outputScale = 1.0;
+            CGFloat jpegQuality = 0.85;
+            NSString *options = [NSString stringWithUTF8String:(const char *)eventData];
+            if ([options length] > 0) {
+                NSArray *parts = [options componentsSeparatedByString:@";;"];
+                if ([parts count] >= 1 && [parts[0] length] > 0) {
+                    outputScale = MIN(MAX([parts[0] doubleValue], 0.1), 1.0);
+                }
+                if ([parts count] >= 2 && [parts[1] length] > 0) {
+                    jpegQuality = MIN(MAX([parts[1] doubleValue], 0.1), 1.0);
+                }
+            }
+
             @try {
                 screenshot = [Screen createScreenShotCGImageRef];
                 if (!screenshot) {
@@ -332,7 +348,8 @@ void processTask(UInt8 *buff, CFWriteStreamRef writeStreamRef)
                 UIImage *image = [UIImage imageWithCGImage:screenshot
                                                      scale:[Screen getScale]
                                                orientation:imageOrientation];
-                if (image && imageOrientation != UIImageOrientationUp) {
+                // One redraw both rotates and shrinks, so a smaller image costs no extra pass.
+                if (image && (imageOrientation != UIImageOrientationUp || outputScale < 1.0)) {
                     CGFloat scale = [Screen getScale];
                     CGSize orientedSize = CGSizeMake(CGImageGetWidth(screenshot) / scale,
                                                      CGImageGetHeight(screenshot) / scale);
@@ -341,14 +358,15 @@ void processTask(UInt8 *buff, CFWriteStreamRef writeStreamRef)
                         orientedSize = CGSizeMake(orientedSize.height, orientedSize.width);
                     }
 
-                    UIGraphicsBeginImageContextWithOptions(orientedSize, YES, scale);
+                    UIGraphicsBeginImageContextWithOptions(orientedSize, YES, scale * outputScale);
+                    CGContextSetInterpolationQuality(UIGraphicsGetCurrentContext(), kCGInterpolationMedium);
                     [image drawInRect:CGRectMake(0, 0, orientedSize.width, orientedSize.height)];
                     UIImage *orientedImage = UIGraphicsGetImageFromCurrentImageContext();
                     UIGraphicsEndImageContext();
                     image = orientedImage;
                 }
 
-                NSData *jpegData = image ? UIImageJPEGRepresentation(image, 0.85) : nil;
+                NSData *jpegData = image ? UIImageJPEGRepresentation(image, jpegQuality) : nil;
                 if (!jpegData || [jpegData length] == 0) {
                     notifyClient((UInt8 *)"-1;;Unable to encode screenshot as JPEG\r\n", writeStreamRef);
                     return;

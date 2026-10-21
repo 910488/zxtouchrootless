@@ -55,6 +55,20 @@ class ScreenshotProtocolTests(unittest.TestCase):
         self.assertEqual(device.screenshot(), jpeg)
         self.assertEqual(device.s.sent, [datahandler.format_socket_data(tasktypes.TASK_SCREENSHOT)])
 
+    def test_scale_and_quality_are_sent_as_task_data(self):
+        jpeg = b"\xff\xd8small\xff\xd9"
+        device = make_device([b"0;;image/jpeg;;%d\r\n" % len(jpeg), jpeg])
+
+        self.assertEqual(device.screenshot(scale=0.5, quality=0.6), jpeg)
+        self.assertEqual(device.s.sent, [b"300.5;;0.6\r\n"])
+
+    def test_quality_alone_keeps_full_size(self):
+        jpeg = b"\xff\xd8quality-only\xff\xd9"
+        device = make_device([b"0;;image/jpeg;;%d\r\n" % len(jpeg), jpeg])
+
+        device.screenshot(quality=0.7)
+        self.assertEqual(device.s.sent, [b"30;;0.7\r\n"])
+
     def test_header_split_across_reads(self):
         jpeg = b"\xff\xd8split-header\xff\xd9"
         device = make_device([
