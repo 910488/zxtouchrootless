@@ -94,6 +94,56 @@ class zxtouch:
 
         return self._recv_exact(content_length)
 
+    DISPLAY_METHODS = ("overlay", "bks")
+    DISPLAY_LEASE_MAX = 3600
+
+    def _display(self, *fields):
+        """Send one TASK_DISPLAY request and parse its key=value reply (1.0.1+lo4 and later)."""
+        self.s.sendall(datahandler.format_socket_data(tasktypes.TASK_DISPLAY, *fields))
+        parts = self._recv_line()[:-2].decode("utf-8", errors="replace").split(";;")
+        if parts[0] != "0":
+            message = parts[1] if len(parts) >= 2 and parts[1] else "unknown error"
+            raise RuntimeError("ZXTouch display {} failed: {}".format(fields[0], message))
+        return _parse_display_fields(parts[1:])
+
+    def display_status(self) -> dict:
+        """Whether the panel is blank, with which method, lease seconds left and brightness."""
+        return self._display("status")
+
+    def set_brightness(self, level) -> dict:
+        """Set the screen brightness (0-1); returns {"previous": .., "brightness": ..}."""
+        _check_unit("brightness", level)
+        return self._display("brightness", "{:g}".format(level))
+
+    def blank(self, seconds, method="overlay", brightness=None, mask=None) -> dict:
+        """Turn the panel dark for a lease of `seconds` (1-3600) while the app keeps running.
+
+        The screen lights up again by itself when the lease runs out or the device
+        locks, so call renew() before then. `brightness` (0-1) is applied while
+        blank and restored afterwards; `mask` overrides the overlay's capture mask.
+        """
+        _check_lease(seconds, self.DISPLAY_LEASE_MAX)
+        if method not in self.DISPLAY_METHODS:
+            raise ValueError("method must be one of {}".format(", ".join(self.DISPLAY_METHODS)))
+        fields = ["blank", method, "{:g}".format(seconds)]
+        if brightness is not None:
+            _check_unit("brightness", brightness)
+            fields.append("brightness={:g}".format(brightness))
+        if mask is not None:
+            if isinstance(mask, bool) or not isinstance(mask, int) or not 0 <= mask <= 0xFFFF:
+                raise ValueError("mask must be an int in 0-0xFFFF")
+            fields.append("mask=0x{:x}".format(mask))
+        return self._display(*fields)
+
+    def renew(self, seconds) -> dict:
+        """Extend the current blank's lease to `seconds` from now."""
+        _check_lease(seconds, self.DISPLAY_LEASE_MAX)
+        return self._display("renew", "{:g}".format(seconds))
+
+    def unblank(self) -> dict:
+        """Light the screen now and restore the brightness from before blank (no-op when lit)."""
+        return self._display("unblank")
+
     def touch(self, type, finger_index, x, y):
         """Perform a touch event
 
@@ -494,3 +544,37 @@ class zxtouch:
 
     def disconnect(self):
         self.s.close()
+
+
+def _check_unit(name, value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 1:
+        raise ValueError("{} must be a number in 0-1".format(name))
+
+
+def _check_lease(seconds, limit):
+    if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or not 1 <= seconds <= limit:
+        raise ValueError("lease must be 1-{} seconds".format(limit))
+
+
+_DISPLAY_INTS = ("blanked", "hidden", "locked")
+_DISPLAY_FLOATS = ("remaining", "brightness", "saved", "previous")
+
+
+def _parse_display_fields(fields):
+    """key=value fields of a TASK_DISPLAY reply; "-" means not known / not set (None)."""
+    result = {}
+    for field in fields:
+        key, sep, value = field.partition("=")
+        if not sep:
+            raise RuntimeError("Malformed ZXTouch display reply field: {}".format(field))
+        if value == "-":
+            result[key] = None
+        elif key in _DISPLAY_INTS:
+            result[key] = int(value)
+        elif key in _DISPLAY_FLOATS:
+            result[key] = float(value)
+        else:
+            result[key] = value
+    if "blanked" in result:
+        result["blanked"] = bool(result["blanked"])
+    return result

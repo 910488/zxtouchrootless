@@ -19,6 +19,7 @@
 #include "UpdateCache.h"
 #include "Screen.h"
 #include "Runner.h"
+#include "Display.h"
 
 extern CFRunLoopRef recordRunLoop;
 
@@ -398,6 +399,21 @@ void processTask(UInt8 *buff, CFWriteStreamRef writeStreamRef)
                 if (screenshot) {
                     CGImageRelease(screenshot);
                 }
+            }
+        }
+    }
+    else if (taskType == TASK_DISPLAY)
+    {
+        @autoreleasepool {
+            NSError *err = nil;
+            NSString *result = handleDisplayTaskFromRawData(eventData, &err);
+            if (err)
+            {
+                notifyClient((UInt8*)[[err localizedDescription] UTF8String], writeStreamRef);
+            }
+            else
+            {
+                notifyClient((UInt8*)[result UTF8String], writeStreamRef);
             }
         }
     }

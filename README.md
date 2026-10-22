@@ -566,6 +566,47 @@ in the form `-1;;<message>\r\n`.
 
 ---
 
+## Blank the screen while an app keeps running
+
+```python
+device.blank(600)                  # dark for a 600 s lease (1-3600)
+device.renew(600)                  # keep it dark: renew before the lease runs out
+device.display_status()            # {"blanked": True, "method": "overlay", "remaining": 597.0, ...}
+device.unblank()                   # light up now, brightness restored
+device.set_brightness(0.2)         # {"previous": 0.5, "brightness": 0.2}
+```
+
+Long automation runs keep an OLED panel showing the same HUD for hours, and
+locking the phone instead pauses the foreground app and makes `screenshot()`
+come back black. `blank()` darkens the panel without locking, so the app keeps
+running and touches still reach it.
+
+- `method="overlay"` (default) puts an opaque black, non-touchable window above
+  everything in SpringBoard. Black OLED pixels are off. The window's layer gets
+  CALayer's private `disableUpdateMask` (`0x12`, or `mask=`) so screen captures
+  leave it out; `hidden` in the reply says whether that property existed.
+  Whether `screenshot()` then sees the app underneath has to be checked on
+  the device.
+- `method="bks"` calls BackBoardServices' `BKSDisplayServicesSetScreenBlanked`
+  (looked up at run time). Experimental: backboardd holds that state, so if
+  SpringBoard dies mid-blank, lock and wake the phone to light it.
+- `brightness=` sets the brightness for the length of the blank and puts the old
+  value back afterwards.
+
+The screen lights up again by itself when the lease runs out or the device
+locks. It never blanks on its own, the overlay is gone after a respring, and
+`blank()` refuses while the device is locked or when SpringBoard cannot tell.
+Lock and unlock with the side button to get a dark screen back by hand.
+
+Requests are `31status`, `31brightness;;<0-1>`,
+`31blank;;<method>;;<seconds>[;;brightness=<0-1>][;;mask=<hex>]`,
+`31renew;;<seconds>` and `31unblank`. Replies are
+`0;;blanked=..;;method=..;;remaining=..;;brightness=..;;saved=..;;hidden=..;;locked=..;;reason=..`
+(`-` for "none" or "unknown"; brightness replies `0;;previous=..;;brightness=..`)
+or `-1;;<message>`. Builds before 1.0.1+lo4 do not know task 31.
+
+---
+
 ## Get screen orientation
 
 ```python

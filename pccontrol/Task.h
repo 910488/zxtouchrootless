@@ -26,6 +26,7 @@
 #define TASK_COLOR_SEARCHER 28
 #define TASK_PROMPT_INPUT 29
 #define TASK_SCREENSHOT 30
+#define TASK_DISPLAY 31
 
 
 // Used only by zxtouch-runner on its own connection. See Runner.h.
