@@ -21,8 +21,8 @@ Every reply except brightness is the status line:
 brightness replies 0;;previous=<0-1>;;brightness=<0-1>. Errors are -1;;<message>.
 
 Methods:
-    overlay  a black SpringBoard window above everything, not touchable, with
-             CALayer's private disableUpdateMask (0x12 unless mask= says
+    overlay  a black SpringBoard window above everything that touches go through,
+             with CALayer's private disableUpdateMask (0x12 unless mask= says
              otherwise) so screen captures leave it out. Black OLED pixels are
              off, and nothing about the display's power state changes.
     bks      BackBoardServices' BKSDisplayServicesSetScreenBlanked. Real blanking,
@@ -48,6 +48,20 @@ static CGFloat savedBrightness = -1;         // brightness to restore, or -1
 static int overlayHidden = -1;               // 1/0 once the mask was tried, -1 before
 static NSString *litReason = @"start";
 static dispatch_source_t leaseTimer = NULL;
+
+// userInteractionEnabled = NO is not enough: the window server hit-tests an opaque
+// layer before UIKit has a say, and the touch ends here instead of in the app. With
+// _ignoresHitTest UIKit creates the window's CAContext with kCAContextIgnoresHitTest,
+// as it does for its own UISoftwareDimmingWindow.
+@interface ZXDisplayOverlayWindow : UIWindow
+@end
+
+@implementation ZXDisplayOverlayWindow
+- (BOOL)_ignoresHitTest
+{
+    return YES;
+}
+@end
 
 static void runOnMain(void (^block)(void))
 {
@@ -119,8 +133,8 @@ static BOOL showOverlay(unsigned int mask, NSString **why)
     CGRect bounds = [UIScreen mainScreen].bounds;
     // Square on the long side: covers the panel whichever way the scene is turned.
     CGFloat side = MAX(bounds.size.width, bounds.size.height);
-    UIWindow *window = scene ? [[UIWindow alloc] initWithWindowScene:scene]
-                             : [[UIWindow alloc] initWithFrame:CGRectZero];
+    UIWindow *window = scene ? [[ZXDisplayOverlayWindow alloc] initWithWindowScene:scene]
+                             : [[ZXDisplayOverlayWindow alloc] initWithFrame:CGRectZero];
     if (!window) {
         *why = @"could not create the overlay window";
         return NO;
@@ -129,7 +143,10 @@ static BOOL showOverlay(unsigned int mask, NSString **why)
     window.windowLevel = UIWindowLevelAlert + 1000;   // above the touch indicator (Alert + 2)
     window.backgroundColor = [UIColor blackColor];
     window.opaque = YES;
-    window.userInteractionEnabled = NO;               // touches go through to the app
+    window.userInteractionEnabled = NO;
+    if ([window.layer respondsToSelector:NSSelectorFromString(@"setAllowsHitTesting:")]) {
+        [window.layer setValue:@NO forKey:@"allowsHitTesting"];
+    }
 
     overlayHidden = 0;
     SEL getter = NSSelectorFromString(@"disableUpdateMask");

@@ -581,12 +581,13 @@ locking the phone instead pauses the foreground app and makes `screenshot()`
 come back black. `blank()` darkens the panel without locking, so the app keeps
 running and touches still reach it.
 
-- `method="overlay"` (default) puts an opaque black, non-touchable window above
-  everything in SpringBoard. Black OLED pixels are off. The window's layer gets
+- `method="overlay"` (default) puts an opaque black window above everything in
+  SpringBoard that ignores hit testing, so touches reach the app. Black OLED
+  pixels are off. The window's layer gets
   CALayer's private `disableUpdateMask` (`0x12`, or `mask=`) so screen captures
   leave it out; `hidden` in the reply says whether that property existed.
-  Whether `screenshot()` then sees the app underneath has to be checked on
-  the device.
+  On iOS 17.0 `screenshot()` sees the app underneath (with `mask=0` it comes
+  back black).
 - `method="bks"` calls BackBoardServices' `BKSDisplayServicesSetScreenBlanked`
   (looked up at run time). Experimental: backboardd holds that state, so if
   SpringBoard dies mid-blank, lock and wake the phone to light it.
