@@ -88,6 +88,24 @@ class DisplayProtocolTests(unittest.TestCase):
         self.assertFalse(lit["blanked"])
         self.assertEqual(level, {"previous": 0.42, "brightness": 0.1})
 
+    def test_status_reads_screen_field(self):
+        device = make_device([LIT[:-2] + b";;screen=1\r\n"])
+
+        self.assertEqual(device.display_status()["screen"], 1)
+
+    def test_wake_and_lock(self):
+        locked = LIT.replace(b"locked=0", b"locked=1")[:-2] + b";;screen=1\r\n"
+        asleep = locked.replace(b"screen=1", b"screen=0")
+        device = make_device([locked, locked, asleep])
+
+        first = device.wake()
+        device.wake(method="home")
+        slept = device.lock()
+
+        self.assertEqual(device.s.sent, [b"31wake\r\n", b"31wake;;home\r\n", b"31lock\r\n"])
+        self.assertEqual(first["locked"], 1)
+        self.assertEqual(slept["screen"], 0)
+
     def test_error_reply_raises_with_message(self):
         device = make_device([b"-1;;device is locked\r\n"])
 
@@ -104,7 +122,7 @@ class DisplayProtocolTests(unittest.TestCase):
         for call in (lambda: device.blank(0), lambda: device.blank(3601), lambda: device.blank(True),
                      lambda: device.blank(60, method="lock"), lambda: device.blank(60, brightness=1.5),
                      lambda: device.blank(60, mask=0x10000), lambda: device.renew(-5),
-                     lambda: device.set_brightness(-0.1)):
+                     lambda: device.set_brightness(-0.1), lambda: device.wake(method="swipe")):
             with self.assertRaises(ValueError):
                 call()
         self.assertEqual(device.s.sent, [])

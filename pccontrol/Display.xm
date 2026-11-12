@@ -14,11 +14,29 @@ Requests (task data after "31"), replies are one line:
     blank;;<method>;;<seconds>[;;brightness=<0-1>][;;mask=<n>]
     renew;;<seconds>
     unblank
+    wake[;;api|home]
+    lock
 
 Every reply except brightness is the status line:
     0;;blanked=<0|1>;;method=<name>;;remaining=<s>;;brightness=<0-1>;;
-       saved=<0-1 or ->;;hidden=<0|1|->;;locked=<0|1|->;;reason=<why it last lit up>
+       saved=<0-1 or ->;;hidden=<0|1|->;;locked=<0|1|->;;reason=<why it last lit up>;;
+       screen=<0|1|->
 brightness replies 0;;previous=<0-1>;;brightness=<0-1>. Errors are -1;;<message>.
+
+wake and lock start a run on a phone that sleeps between runs and put it back to
+sleep afterwards. They are for a phone without a passcode: wake never enters or
+skips one, so on a phone with a passcode the passcode screen comes up and the
+device stays locked (the status line says locked=1).
+    wake     only acts while the device is locked. api (the default) turns the
+             screen on as a home button press does (backlight source 2) and asks
+             SBLockScreenManager to unlock the UI (source 2). home simulates a
+             home button press instead; each press goes one step (wake, then
+             unlock), so the caller checks the status and presses again. An
+             unlocked device is left alone, so a running app is never sent home.
+             Unlocking finishes after the reply: poll status for locked=0.
+    lock     simulates a lock button press, but only while the screen is on, so
+             it always puts the phone to sleep and never wakes it. A blank is lit
+             first. The foreground app pauses, as it does when someone locks.
 
 Methods:
     overlay  a black SpringBoard window above everything that touches go through,
@@ -31,7 +49,7 @@ Methods:
 
 Safety: a blank always comes with a lease of 1-3600 seconds and the screen lights
 up again by itself once it runs out, or as soon as the device locks. Nothing here
-ever blanks on its own, never locks, and keeps no state on disk: a respring takes
+ever blanks, wakes or locks on its own, and keeps no state on disk: a respring takes
 the overlay away (a bks blank may outlive it until the next lock and wake). Every
 private symbol is looked up first; a missing one is an error reply, never a crash.
 */
@@ -115,6 +133,60 @@ static int screenOnState()
     SEL sel = NSSelectorFromString(@"screenIsOn");
     if (!backlight || ![backlight respondsToSelector:sel]) return -1;
     return ((BOOL (*)(id, SEL))objc_msgSend)(backlight, sel) ? 1 : 0;
+}
+
+// Backlight and unlock source 2 is the home button: SpringBoard logs it when the
+// home button wakes the screen, and unlock-on-wake tweaks pass it to unlockUIFromSource.
+#define DISPLAY_SOURCE_HOME_BUTTON 2
+
+// Main queue only. Starts waking and unlocking a locked device; NO with *why when
+// a private method is missing.
+static BOOL wakeAndUnlock(NSString *method, NSString **why)
+{
+    if ([method isEqualToString:@"home"]) {
+        id springboard = [UIApplication sharedApplication];
+        SEL press = NSSelectorFromString(@"_simulateHomeButtonPressWithCompletion:");
+        if (![springboard respondsToSelector:press]) {
+            *why = @"SpringBoard has no _simulateHomeButtonPressWithCompletion:";
+            return NO;
+        }
+        ((void (*)(id, SEL, id))objc_msgSend)(springboard, press, nil);
+        NSLog(@"com.zjx.springboard: display: wake: home button press");
+        return YES;
+    }
+
+    id backlight = sharedIfExists(@"SBBacklightController");
+    id manager = sharedIfExists(@"SBLockScreenManager");
+    SEL turnOn = NSSelectorFromString(@"turnOnScreenFullyWithBacklightSource:");
+    SEL unlock = NSSelectorFromString(@"unlockUIFromSource:withOptions:");
+    if (!backlight || ![backlight respondsToSelector:turnOn]) {
+        *why = @"SBBacklightController has no turnOnScreenFullyWithBacklightSource:";
+        return NO;
+    }
+    if (!manager || ![manager respondsToSelector:unlock]) {
+        *why = @"SBLockScreenManager has no unlockUIFromSource:withOptions:";
+        return NO;
+    }
+    if (screenOnState() != 1) {
+        ((void (*)(id, SEL, long long))objc_msgSend)(backlight, turnOn, DISPLAY_SOURCE_HOME_BUTTON);
+    }
+    BOOL started = ((BOOL (*)(id, SEL, int, id))objc_msgSend)(manager, unlock, DISPLAY_SOURCE_HOME_BUTTON, nil);
+    NSLog(@"com.zjx.springboard: display: wake: screen on, unlock UI returned %d", started);
+    return YES;
+}
+
+// Main queue only. The caller has checked that the screen is on.
+static BOOL pressLockButton(NSString **why)
+{
+    id springboard = [UIApplication sharedApplication];
+    SEL press = NSSelectorFromString(@"_simulateLockButtonPress");
+    if (![springboard respondsToSelector:press]) {
+        *why = @"SpringBoard has no _simulateLockButtonPress";
+        return NO;
+    }
+    ((void (*)(id, SEL))objc_msgSend)(springboard, press);
+    NSLog(@"com.zjx.springboard: display: lock button press");
+    return YES;
 }
 
 static UIWindowScene *mainWindowScene()
@@ -224,12 +296,14 @@ static NSString *statusLine()
 {
     double remaining = (blankMethod && leaseEnd) ? MAX([leaseEnd timeIntervalSinceNow], 0) : 0;
     int locked = lockState();
-    return [NSString stringWithFormat:@"0;;blanked=%d;;method=%@;;remaining=%.0f;;brightness=%.3f;;saved=%@;;hidden=%@;;locked=%@;;reason=%@\r\n",
+    int screen = screenOnState();
+    return [NSString stringWithFormat:@"0;;blanked=%d;;method=%@;;remaining=%.0f;;brightness=%.3f;;saved=%@;;hidden=%@;;locked=%@;;reason=%@;;screen=%@\r\n",
             blankMethod ? 1 : 0, blankMethod ?: @"-", remaining, [UIScreen mainScreen].brightness,
             savedBrightness >= 0 ? [NSString stringWithFormat:@"%.3f", savedBrightness] : @"-",
             overlayHidden >= 0 ? [NSString stringWithFormat:@"%d", overlayHidden] : @"-",
             locked >= 0 ? [NSString stringWithFormat:@"%d", locked] : @"-",
-            blankMethod ? @"-" : litReason];
+            blankMethod ? @"-" : litReason,
+            screen >= 0 ? [NSString stringWithFormat:@"%d", screen] : @"-"];
 }
 
 static BOOL parseUnit(NSString *text, double *value)
@@ -369,8 +443,52 @@ NSString *handleDisplayTaskFromRawData(UInt8 *eventData, NSError **error)
             reply = statusLine();
         });
     }
+    else if ([command isEqualToString:@"wake"]) {
+        NSString *method = parts.count > 1 ? parts[1] : @"api";
+        if (parts.count > 2 || (![method isEqualToString:@"api"] && ![method isEqualToString:@"home"])) {
+            failure = @"usage: wake[;;api|home]";
+        } else {
+            runOnMain(^{
+                int locked = lockState();
+                if (locked == -1) {
+                    failure = @"cannot tell whether the device is locked";
+                    return;
+                }
+                if (locked == 1) {
+                    NSString *why = nil;
+                    if (!wakeAndUnlock(method, &why)) {
+                        failure = why;
+                        return;
+                    }
+                }
+                reply = statusLine();
+            });
+        }
+    }
+    else if ([command isEqualToString:@"lock"]) {
+        if (parts.count != 1) {
+            failure = @"usage: lock";
+        } else {
+            runOnMain(^{
+                int screen = screenOnState();
+                if (screen == -1) {
+                    failure = @"cannot tell whether the screen is on";
+                    return;
+                }
+                if (screen == 1) {
+                    lightUp(@"lock");
+                    NSString *why = nil;
+                    if (!pressLockButton(&why)) {
+                        failure = why;
+                        return;
+                    }
+                }
+                reply = statusLine();
+            });
+        }
+    }
     else {
-        failure = [NSString stringWithFormat:@"unknown display command %@ (status, brightness, blank, renew, unblank)", command];
+        failure = [NSString stringWithFormat:@"unknown display command %@ (status, brightness, blank, renew, unblank, wake, lock)", command];
     }
 
     if (failure) {

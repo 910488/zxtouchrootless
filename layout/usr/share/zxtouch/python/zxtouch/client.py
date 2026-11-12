@@ -144,6 +144,23 @@ class zxtouch:
         """Light the screen now and restore the brightness from before blank (no-op when lit)."""
         return self._display("unblank")
 
+    WAKE_METHODS = ("api", "home")
+
+    def wake(self, method="api") -> dict:
+        """Wake and unlock a locked phone that has no passcode (1.0.1+lo6 and later).
+
+        Does nothing on an unlocked phone. Unlocking finishes after the reply, so
+        poll display_status() until "locked" is 0. With a passcode the device stays
+        locked. "home" presses the home button once per call (wake, then unlock).
+        """
+        if method not in self.WAKE_METHODS:
+            raise ValueError("method must be one of {}".format(", ".join(self.WAKE_METHODS)))
+        return self._display("wake") if method == "api" else self._display("wake", method)
+
+    def lock(self) -> dict:
+        """Press the lock button if the screen is on (never wakes it); the app in front pauses."""
+        return self._display("lock")
+
     def touch(self, type, finger_index, x, y):
         """Perform a touch event
 
@@ -556,7 +573,7 @@ def _check_lease(seconds, limit):
         raise ValueError("lease must be 1-{} seconds".format(limit))
 
 
-_DISPLAY_INTS = ("blanked", "hidden", "locked")
+_DISPLAY_INTS = ("blanked", "hidden", "locked", "screen")
 _DISPLAY_FLOATS = ("remaining", "brightness", "saved", "previous")
 
 
